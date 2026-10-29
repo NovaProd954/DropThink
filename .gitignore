@@ -1,0 +1,7 @@
+build/
+.gradle/
+.cxx/
+local.properties
+.idea/
+*.apk
+app/src/main/cpp/llama.cpp/
