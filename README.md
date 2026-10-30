@@ -4,7 +4,7 @@ Free, offline-first Android app for running local GGUF models (llama.cpp) with M
 
 ## Status — read this first
 
-Written but **not yet built by CI and not yet run on a device**. Nothing below is claimed to work until a build and a device run prove it.
+**CI build is green** (Kotlin compile, unit tests, native llama.cpp arm64 build, debug APK). **Nothing has been run on a device yet**, and the MCP client has never talked to the live servers. Items marked "untested" are written but unproven.
 
 | Area | State |
 |---|---|
@@ -40,7 +40,7 @@ bash scripts/fetch-llama.sh      # clones the llama.cpp tag in llama.cpp.version
 gradle :app:assembleDebug        # app/build/outputs/apk/debug/
 ```
 
-CI builds on every push, uploads the APK as an artifact, and refreshes the `debug-latest` pre-release on `main`. If a device lacks dot-product instructions, build with `-PllamaArmArch=armv8-a`.
+CI builds on every push, uploads the APK as an artifact, and refreshes the `debug-latest` pre-release on `main` (direct link: `https://github.com/NovaProd954/DropThink/releases/download/debug-latest/DropThink-debug.apk`). On failure it publishes error excerpts to the `ci-logs` branch. If a device lacks dot-product instructions, build with `-PllamaArmArch=armv8-a`.
 
 ## Privacy
 
