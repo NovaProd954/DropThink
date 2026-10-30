@@ -40,10 +40,26 @@ jobs:
         run: gradle --no-daemon :app:testDebugUnitTest 2>&1 | tee tests.log
       - name: Debug APK
         run: gradle --no-daemon :app:assembleDebug 2>&1 | tee apk.log
-      - name: Publish build logs on failure
-        if: failure()
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DropThink-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+      - name: Publish rolling debug release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true
+        run: |
+          ls -la app/build/outputs/apk/debug/ 2>&1 | tee release.log
+          cp app/build/outputs/apk/debug/*.apk DropThink-debug.apk 2>&1 | tee -a release.log
+          (gh release view debug-latest >/dev/null 2>&1 || gh release create debug-latest --prerelease --title "Debug build (latest main)" --notes "Rolling debug APK built by CI." --target "$GITHUB_SHA") 2>&1 | tee -a release.log
+          gh release upload debug-latest DropThink-debug.apk --clobber 2>&1 | tee -a release.log
+          gh release edit debug-latest --notes "Built from commit $GITHUB_SHA" 2>&1 | tee -a release.log
+      - name: Publish build logs
+        if: always()
         run: |
           mkdir -p /tmp/l
+          cp release.log /tmp/l/release.log 2>/dev/null || true
           for f in kotlin tests apk; do
             [ -f $f.log ] || continue
             grep -nE -B1 -A4 "^e: |error:|FAILED|What went wrong|Execution failed" $f.log | head -150 > /tmp/l/$f-errors.txt || true
@@ -56,16 +72,3 @@ jobs:
           git add -A
           git commit -q -m "build logs for $GITHUB_SHA"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-logs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: DropThink-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-      - name: Publish rolling debug release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cp app/build/outputs/apk/debug/*.apk DropThink-debug.apk
-          gh release view debug-latest >/dev/null 2>&1 || gh release create debug-latest --prerelease --title "Debug build (latest main)" --notes "Rolling debug APK built by CI." --target "$GITHUB_SHA"
-          gh release upload debug-latest DropThink-debug.apk --clobber
-          gh release edit debug-latest --notes "Built from commit $GITHUB_SHA"
