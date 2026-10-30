@@ -34,8 +34,28 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Unit tests and debug APK
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+      - name: Compile Kotlin
+        run: gradle --no-daemon :app:compileDebugKotlin 2>&1 | tee kotlin.log
+      - name: Unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest 2>&1 | tee tests.log
+      - name: Debug APK
+        run: gradle --no-daemon :app:assembleDebug 2>&1 | tee apk.log
+      - name: Publish build logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/l
+          for f in kotlin tests apk; do
+            [ -f $f.log ] || continue
+            grep -nE -B1 -A4 "^e: |error:|FAILED|What went wrong|Execution failed" $f.log | head -150 > /tmp/l/$f-errors.txt || true
+            tail -n 120 $f.log > /tmp/l/$f-tail.txt
+          done
+          cd /tmp/l
+          git init -q -b ci-logs
+          git config user.email ci@example.com
+          git config user.name ci
+          git add -A
+          git commit -q -m "build logs for $GITHUB_SHA"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-logs
       - uses: actions/upload-artifact@v4
         with:
           name: DropThink-debug-apk
