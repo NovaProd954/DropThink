@@ -1,0 +1,6 @@
+20-> Task :app:compileDebugKotlin
+21:e: The daemon has terminated unexpectedly on startup attempt #1 with error code: 0. The daemon process output:
+22-    1. Kotlin compile daemon is ready
+23-w: file:///home/runner/work/DropThink/DropThink/app/src/main/java/com/novaprod/dropthink/mcp/McpClient.kt:98:67 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'kotlin.Any?'.
+24-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1793435127456.json
+25-

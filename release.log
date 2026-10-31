@@ -1,0 +1,6 @@
+total 15112
+drwxr-xr-x 2 runner runner     4096 Oct 31 08:27 .
+drwxr-xr-x 3 runner runner     4096 Oct 31 08:27 ..
+-rw-r--r-- 1 runner runner 15459486 Oct 31 08:27 app-debug.apk
+-rw-r--r-- 1 runner runner      410 Oct 31 08:27 output-metadata.json
+https://github.com/NovaProd954/DropThink/releases/tag/debug-latest
