@@ -22,7 +22,9 @@ import com.novaprod.dropthink.data.ChatMessage
 import com.novaprod.dropthink.data.ModelEntry
 import com.novaprod.dropthink.data.ModelStatus
 import com.novaprod.dropthink.mcp.McpStatus
+import com.novaprod.dropthink.tools.LocalTools
 import com.novaprod.dropthink.tools.ToolRegistry
+import com.novaprod.dropthink.tools.key
 import com.novaprod.dropthink.util.formatBytes
 
 @Composable
@@ -53,6 +55,8 @@ fun ChatScreen(vm: MainViewModel) {
     val loaded by vm.loaded.collectAsState()
     val status by vm.status.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    val cfg by vm.settings.collectAsState()
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size) { listState.scrollToItem(0) }
     Column(Modifier.fillMaxSize()) {
@@ -70,7 +74,11 @@ fun ChatScreen(vm: MainViewModel) {
         ) {
             items(messages.asReversed(), key = { it.id }) { MessageBubble(it) }
         }
+        if (showSettings) ChatSettingsDialog(vm) { showSettings = false }
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.Bottom) {
+            TextButton(onClick = { showSettings = true }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Text(if (cfg.toolsEnabled && cfg.selectedTools.isNotEmpty()) "⚙ ${cfg.selectedTools.size}" else "⚙")
+            }
             OutlinedTextField(
                 value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
                 placeholder = { Text("Message") }, maxLines = 5,
@@ -80,6 +88,73 @@ fun ChatScreen(vm: MainViewModel) {
             else Button(onClick = { vm.send(input); input = "" }, enabled = loaded != null && input.isNotBlank()) { Text("Send") }
         }
     }
+}
+
+@Composable
+fun ToolCheck(title: String, subtitle: String, checked: Boolean, onToggle: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = { onToggle() })
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            if (subtitle.isNotBlank()) Text(subtitle.replace("\n", " ").take(90), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+fun ChatSettingsDialog(vm: MainViewModel, onDismiss: () -> Unit) {
+    val s by vm.settings.collectAsState()
+    val states by vm.mcp.states.collectAsState()
+    val configs by vm.mcp.configs.collectAsState()
+    var page by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(page) {
+        if (page == 1) configs.filter { it.enabled }.forEach { if (states[it.id]?.status != McpStatus.CONNECTED) vm.connectServer(it.id) }
+    }
+    fun toggle(keys: List<String>, on: Boolean) = vm.updateSettings { c -> c.copy(selectedTools = if (on) c.selectedTools + keys else c.selectedTools - keys.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (page == 0) "Chat settings" else "Select tools") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (page == 0) {
+                    SwitchRow("Thinking", s.thinking) { v -> vm.updateSettings { it.copy(thinking = v) } }
+                    SwitchRow("Tools", s.toolsEnabled) { v -> vm.updateSettings { it.copy(toolsEnabled = v) } }
+                    if (s.toolsEnabled) {
+                        TextButton(onClick = { page = 1 }) {
+                            Text(if (s.selectedTools.isEmpty()) "Select tools ›  (none: automatic routing)" else "Select tools ›  (${s.selectedTools.size} selected)")
+                        }
+                        Text(
+                            "With tools selected, the app sends the model instructions on how to use them before your message, and requires a tool call before any answer.",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                } else {
+                    Text("Built-in", style = MaterialTheme.typography.labelLarge)
+                    LocalTools.specs.forEach { t -> ToolCheck(t.name, t.description, t.key in s.selectedTools) { toggle(listOf(t.key), t.key !in s.selectedTools) } }
+                    configs.forEach { c ->
+                        val st = states[c.id]
+                        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(c.name, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                            val tools = st?.tools.orEmpty()
+                            if (!c.enabled) Text("disabled", style = MaterialTheme.typography.labelSmall)
+                            else if (st?.status == McpStatus.CONNECTED) {
+                                val keys = tools.map { "${c.id}/${it.name}" }
+                                val all = keys.isNotEmpty() && keys.all { it in s.selectedTools }
+                                TextButton(onClick = { toggle(keys, !all) }) { Text(if (all) "None" else "All") }
+                            } else TextButton(onClick = { vm.connectServer(c.id) }) { Text(if (st?.status == McpStatus.CONNECTING) "Connecting…" else "Connect") }
+                        }
+                        if (c.enabled && st?.status == McpStatus.ERROR) Text("Error: ${st.error}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        if (c.enabled) st?.tools.orEmpty().forEach { t ->
+                            val k = "${c.id}/${t.name}"
+                            ToolCheck(t.name, t.description, k in s.selectedTools) { toggle(listOf(k), k !in s.selectedTools) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { if (page == 1) page = 0 else onDismiss() }) { Text(if (page == 1) "Back" else "Done") } },
+        dismissButton = if (page == 1) ({ TextButton(onClick = onDismiss) { Text("Close") } }) else null,
+    )
 }
 
 @Composable

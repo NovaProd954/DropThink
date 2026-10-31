@@ -10,6 +10,7 @@ enum class Route(val label: String, val serverId: String?) {
     URL_EXTRACT("page extraction", McpDefaults.FIRECRAWL),
     WEATHER("weather", McpDefaults.OPENMETEO),
     MATH("calculator", null),
+    SELECTED("selected tools", null),
 }
 
 object Router {
@@ -38,7 +39,7 @@ object Router {
 
     fun select(route: Route, text: String, all: List<ToolSpec>, max: Int): List<ToolSpec> {
         return when (route) {
-            Route.NONE -> emptyList()
+            Route.NONE, Route.SELECTED -> emptyList()
             Route.MATH -> all.filter { it.serverId == null && it.remoteName == "calculator" }
             Route.WEB_SEARCH, Route.URL_EXTRACT, Route.WEATHER -> Gateway.specs
         }

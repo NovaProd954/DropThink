@@ -141,6 +141,7 @@ data class AppSettings(
     val thinking: Boolean = false,
     val systemPrompt: String = "You are a helpful assistant.",
     val toolsEnabled: Boolean = true,
+    val selectedTools: Set<String> = emptySet(),
     val maxToolsExposed: Int = 3,
     val maxToolCalls: Int = 4,
     val toolRetries: Int = 2,
@@ -154,7 +155,7 @@ data class AppSettings(
         .put("useMmap", useMmap).put("maxTokensPerPass", maxTokensPerPass)
         .put("totalOutputBudget", totalOutputBudget).put("autoContinue", autoContinue)
         .put("maxContinuations", maxContinuations).put("thinking", thinking).put("systemPrompt", systemPrompt)
-        .put("toolsEnabled", toolsEnabled).put("maxToolsExposed", maxToolsExposed)
+        .put("toolsEnabled", toolsEnabled).put("selectedTools", JSONArray(selectedTools.toList())).put("maxToolsExposed", maxToolsExposed)
         .put("maxToolCalls", maxToolCalls).put("toolRetries", toolRetries).put("maxToolResultChars", maxToolResultChars)
         .put("activePreset", activePreset).put("lastModelId", lastModelId ?: "")
         .put("presets", JSONArray(presets.map { JSONObject().put("name", it.name).put("sampling", it.sampling.toJson()) }))
@@ -178,6 +179,7 @@ data class AppSettings(
                 maxContinuations = o.optInt("maxContinuations", d.maxContinuations),
                 thinking = o.optBoolean("thinking", d.thinking), systemPrompt = o.optString("systemPrompt", d.systemPrompt),
                 toolsEnabled = o.optBoolean("toolsEnabled", d.toolsEnabled),
+                selectedTools = o.optJSONArray("selectedTools")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
                 maxToolsExposed = o.optInt("maxToolsExposed", d.maxToolsExposed),
                 maxToolCalls = o.optInt("maxToolCalls", d.maxToolCalls), toolRetries = o.optInt("toolRetries", d.toolRetries),
                 maxToolResultChars = o.optInt("maxToolResultChars", d.maxToolResultChars),

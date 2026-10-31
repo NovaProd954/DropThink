@@ -21,6 +21,8 @@ data class ToolSpec(
     val schema: JSONObject,
 )
 
+val ToolSpec.key: String get() = "${serverId ?: "local"}/$remoteName"
+
 data class ParsedCall(val name: String, val args: JSONObject, val raw: String, val error: String?)
 
 data class ToolLogEntry(

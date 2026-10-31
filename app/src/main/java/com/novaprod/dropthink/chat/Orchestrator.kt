@@ -25,6 +25,8 @@ class ChatOrchestrator(
     @Volatile private var stopped = false
     private val prior = ArrayList<JSONObject?>()
     private val evidence = StringBuilder()
+    private var allowed: Set<String>? = null
+    private var selectedSpecs: List<ToolSpec> = emptyList()
 
     private class Pass(val raw: String, val res: GenResult, val continuations: Int, val repetition: Boolean, val totalTokens: Int, val note: String)
     private class Outcome(val ok: Boolean, val text: String, val label: String? = null)
@@ -129,7 +131,7 @@ class ChatOrchestrator(
         val res: McpCallResult = try {
             withTimeout(75_000) {
                 when (spec.serverId) {
-                    Gateway.ID -> { val g = Gateway.run(spec.remoteName, args, mcp, prior); label = g.label; McpCallResult(g.ok, g.text) }
+                    Gateway.ID -> { val g = Gateway.run(spec.remoteName, args, mcp, prior, allowed); label = g.label; McpCallResult(g.ok, g.text) }
                     null -> LocalTools.run(spec.remoteName, args)
                     else -> mcp.call(spec.serverId!!, spec.remoteName, args)
                 }
@@ -143,6 +145,26 @@ class ChatOrchestrator(
         val text = if (res.ok) res.text.ifBlank { "(empty result)" } else if (res.text.startsWith("ERROR")) res.text else "ERROR: ${res.text}"
         log.add(ToolLogEntry(System.currentTimeMillis(), route.label, label, args.toString().take(800), res.ok, System.currentTimeMillis() - t0, text.take(2000), note))
         return Outcome(res.ok, text, label)
+    }
+
+    private suspend fun prepareSelected(s: AppSettings): Pair<List<ToolSpec>, String> {
+        val keys = s.selectedTools
+        val problems = ArrayList<String>()
+        for (sid in keys.map { it.substringBefore('/') }.filter { it != "local" }.distinct()) {
+            val cfg = mcp.config(sid)
+            if (cfg == null || !cfg.enabled) { problems.add("${cfg?.name ?: sid} is disabled in the Tools tab"); continue }
+            status("Connecting to ${cfg.name}…")
+            val st = mcp.ensureConnected(sid)
+            status(null)
+            if (st.status != McpStatus.CONNECTED) problems.add("${cfg.name}: ${st.error ?: "not connected"}")
+        }
+        val chosen = ToolRegistry.build(mcp.states.value).filter { it.key in keys }
+        selectedSpecs = chosen
+        allowed = chosen.filter { it.serverId != null }.map { it.key }.toSet()
+        val tools = ArrayList<ToolSpec>()
+        if (chosen.any { it.serverId != null }) tools.addAll(Gateway.specs)
+        tools.addAll(chosen.filter { it.serverId == null })
+        return tools to problems.joinToString("; ")
     }
 
     private suspend fun prepareTools(route: Route, text: String, s: AppSettings): Pair<List<ToolSpec>, String> {
@@ -167,14 +189,16 @@ class ChatOrchestrator(
         stopped = false
         prior.clear()
         evidence.setLength(0)
+        allowed = null
+        selectedSpecs = emptyList()
         val lm = engine.loaded
         if (lm == null) { status("Load a model in the Models tab first."); return }
         val userMsg = ChatMessage(newId(), "user", userText)
         add(userMsg)
-        val route = if (s.toolsEnabled) Router.classify(userText) else Route.NONE
+        val route = if (!s.toolsEnabled) Route.NONE else if (s.selectedTools.isNotEmpty()) Route.SELECTED else Router.classify(userText)
         var tools: List<ToolSpec> = emptyList()
         if (route != Route.NONE) {
-            val (sel, problem) = prepareTools(route, userText, s)
+            val (sel, problem) = if (route == Route.SELECTED) prepareSelected(s) else prepareTools(route, userText, s)
             log.note(route.label, "route=${route.name} tools=${sel.joinToString { it.name }}${if (problem.isNotEmpty()) " problem=$problem" else ""}")
             tools = sel
             if (tools.isEmpty()) {
@@ -193,10 +217,17 @@ class ChatOrchestrator(
         val xml = lm.info["template_tools_xml"] == "1"
         val sampling = if (tools.isNotEmpty()) s.presets.getOrElse(TOOL_PRESET_INDEX) { s.presets[0] }.sampling else s.presets[s.activePreset.coerceIn(0, s.presets.lastIndex)].sampling
         var system = s.systemPrompt
-        if (tools.isNotEmpty()) system += "\n\n" + ToolPrompt.RULES + "\n\n" + ToolPrompt.build(tools, xml)
-        if (tools.any { it.serverId == Gateway.ID }) route.serverId?.let { system += "\n\n" + Gateway.RULES + "\n\n" + Gateway.catalog(it, mcp) }
+        if (route == Route.SELECTED && tools.isNotEmpty()) system += "\n\n" + AppPrompt.build(selectedSpecs, mcp, allowed ?: emptySet(), userText, xml) + "\n\n" + ToolPrompt.build(tools, xml)
+        else {
+            if (tools.isNotEmpty()) system += "\n\n" + ToolPrompt.RULES + "\n\n" + ToolPrompt.build(tools, xml)
+            if (tools.any { it.serverId == Gateway.ID }) route.serverId?.let { system += "\n\n" + Gateway.RULES + "\n\n" + Gateway.catalog(it, mcp) }
+        }
 
         val work = ArrayList(modelHistory(messages.value))
+        if (route == Route.SELECTED) {
+            val i = work.indexOfLast { it.first == "user" && !it.second.startsWith("<tool_response>") }
+            if (i >= 0) work[i] = work[i].first to (work[i].second + "\n\n(Tool mode is on. Reply with a tool call first. Do not answer from memory.)")
+        }
         val baseSize = work.size
         var active = tools
         val used = ArrayList<String>()
@@ -224,18 +255,21 @@ class ChatOrchestrator(
                     retries++
                     log.note(route.label, "model produced no tool call; correction retry $retries/${s.toolRetries}")
                     work.add("assistant" to answer.ifBlank { "(no answer)" })
-                    work.add("user" to "Correction: this request requires tool data and cannot be answered from memory. Reply ONLY with a tool call in the required format, using one of: ${active.joinToString { it.name }}${route.serverId?.let { " (server id: $it)" } ?: ""}.")
+                    val ex = if (route == Route.SELECTED) Gateway.example(selectedSpecs, userText, xml) else ""
+                    work.add("user" to "Correction: this request requires tool data and cannot be answered from memory. Reply ONLY with a tool call in the required format, using one of: ${active.joinToString { it.name }}${route.serverId?.let { " (server id: $it)" } ?: ""}." + (if (ex.isNotEmpty()) "\nExample:\n$ex" else ""))
                     upd(asstId) { it.copy(content = "", reasoning = "") }
                     continue
                 }
-                val spec = active.first()
-                val forced = if (route == Route.MATH) Router.forceArgs(spec, userText, route) else null
-                if (forced == null) {
+                val fc: ParsedCall? = if (route == Route.SELECTED) Gateway.force(selectedSpecs, userText) else {
+                    val spec = active.first()
+                    (if (route == Route.MATH) Router.forceArgs(spec, userText, route) else null)?.let { ParsedCall(spec.name, it, "<tool_call>forced</tool_call>", null) }
+                }
+                if (fc == null) {
                     upd(asstId) { it.copy(content = "The model did not call the required tool after ${s.toolRetries} correction attempt(s), so I won't answer from memory. Try again, rephrase, or use a larger model. The Tools tab log shows what happened.", isError = true, footer = "No tool result") }
                     persist(); return
                 }
-                log.note(route.label, "forced by router: ${spec.name}")
-                parsed = listOf(ParsedCall(spec.name, forced, "<tool_call>forced</tool_call>", null))
+                log.note(route.label, "forced by app: ${fc.name}")
+                parsed = listOf(fc)
             }
 
             if (parsed.isEmpty()) {
