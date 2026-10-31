@@ -90,6 +90,13 @@ object Gateway {
         return out
     }
 
+    fun rewrite(call: ParsedCall, pool: List<ToolSpec>, allowed: Set<String>?): ParsedCall? {
+        if (call.error != null) return null
+        val n = call.name.trim()
+        val hit = pool.firstOrNull { it.serverId != null && it.serverId != ID && (it.remoteName == n || it.name == n) && (allowed == null || it.key in allowed) } ?: return null
+        return ParsedCall(CALL, JSONObject().put("server", hit.serverId).put("tool", hit.remoteName).put("arguments", call.args), call.raw, null)
+    }
+
     fun force(selected: List<ToolSpec>, text: String): ParsedCall? {
         val b = best(selected, text)
         if (b != null) return ParsedCall(CALL, JSONObject().put("server", b.first.serverId).put("tool", b.first.remoteName).put("arguments", b.second), "<tool_call>forced</tool_call>", null)
@@ -163,8 +170,7 @@ object Gateway {
             val sb = StringBuilder()
             for (c in mcp.configs.value.filter { it.enabled && (allowed == null || allowed.any { k -> k.startsWith(it.id + "/") }) }) {
                 val st = mcp.ensureConnected(c.id)
-                sb.append(c.id).append(" (").append(c.name).append("): ")
-                if (st.status == McpStatus.CONNECTED) sb.append(st.tools.filter { ok(c.id, it.name, allowed) }.joinToString { it.name }) else sb.append("not connected: ").append(st.error)
+                if (st.status == McpStatus.CONNECTED) sb.append(catalog(c.id, mcp, allowed)) else sb.append(c.id).append(" (").append(c.name).append("): not connected: ").append(st.error)
                 sb.append('\n')
             }
             return GwOut(true, sb.toString().trim().ifEmpty { "no servers enabled" }, LIST)

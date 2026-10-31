@@ -289,9 +289,12 @@ class ChatOrchestrator(
             work.add("assistant" to callRaw)
             val responses = StringBuilder()
             var validationFailure = false
-            for (call in parsed) {
+            val pool = ToolRegistry.build(mcp.states.value)
+            for (c in parsed) {
                 if (calls >= s.maxToolCalls) break
                 if (stopped) break
+                val call = if (active.none { it.name == c.name } && active.any { it.serverId == Gateway.ID }) Gateway.rewrite(c, pool, allowed) ?: c else c
+                if (call !== c) log.note(route.label, "direct call to '${c.name}' routed through mcp_call_tool")
                 val spec = active.firstOrNull { it.name == call.name }
                 val out: Outcome = when {
                     call.error != null -> Outcome(false, "ERROR: ${call.error}")
@@ -299,7 +302,10 @@ class ChatOrchestrator(
                     else -> {
                         val args = ToolCallParser.coerce(call.args, spec.schema)
                         val bad = ToolCallParser.validate(args, spec.schema)
-                        if (bad != null) Outcome(false, "ERROR: invalid arguments: $bad")
+                        if (bad != null) {
+                            val ex = if (spec.serverId == Gateway.ID) Gateway.example(selectedSpecs, userText, xml) else ""
+                            Outcome(false, "ERROR: invalid arguments: $bad" + (if (ex.isNotEmpty()) "\nCorrect format:\n$ex" else ""))
+                        }
                         else {
                             status("Running ${spec.name}…")
                             val o = execute(spec, args, route, if (call.raw.contains("forced")) "forced by router" else "")
