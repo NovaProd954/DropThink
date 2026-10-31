@@ -37,40 +37,10 @@ object Router {
     }
 
     fun select(route: Route, text: String, all: List<ToolSpec>, max: Int): List<ToolSpec> {
-        fun n(t: ToolSpec) = t.remoteName.lowercase()
-        val t = text.lowercase()
         return when (route) {
             Route.NONE -> emptyList()
             Route.MATH -> all.filter { it.serverId == null && it.remoteName == "calculator" }
-            Route.WEB_SEARCH -> {
-                val p = all.filter { it.serverId == McpDefaults.PARALLEL }
-                val picked = (p.filter { "search" in n(it) } + p.filter { "fetch" in n(it) }).distinct()
-                (picked.ifEmpty { p }).take(max)
-            }
-            Route.URL_EXTRACT -> {
-                val f = all.filter { it.serverId == McpDefaults.FIRECRAWL }
-                val scrape = f.filter { "scrape" in n(it) }
-                val parse = f.filter { "parse" in n(it) }
-                val picked = (scrape + if (DOC.containsMatchIn(text)) parse else emptyList()).distinct()
-                (picked.ifEmpty { f.filter { "scrape" in n(it) || "parse" in n(it) || "extract" in n(it) } }).take(max)
-            }
-            Route.WEATHER -> {
-                val w = all.filter { it.serverId == McpDefaults.OPENMETEO }
-                fun score(tool: ToolSpec): Int {
-                    val s = (tool.remoteName + " " + tool.description).lowercase()
-                    var sc = 0
-                    if ("geocod" in s) sc += 5
-                    if ("forecast" in s) sc += 4
-                    if ("weather" in s && "histor" !in s && "archive" !in s) sc += 3
-                    if (("histor" in s || "archive" in s || "climate" in s) && Regex("histor|past|last (year|month)|climate|archive|in (19|20)\\d\\d").containsMatchIn(t)) sc += 6
-                    if ("air" in s && Regex("air quality|aqi|pollut|pm2|ozone").containsMatchIn(t)) sc += 6
-                    if ("marine" in s && Regex("marine|wave|swell|ocean|sea ").containsMatchIn(t)) sc += 6
-                    if ("elevation" in s && Regex("elevation|altitude|height above").containsMatchIn(t)) sc += 6
-                    return sc
-                }
-                val ranked = w.map { it to score(it) }.filter { it.second > 0 }.sortedByDescending { it.second }.map { it.first }
-                (ranked.ifEmpty { w }).take(max)
-            }
+            Route.WEB_SEARCH, Route.URL_EXTRACT, Route.WEATHER -> Gateway.specs
         }
     }
 

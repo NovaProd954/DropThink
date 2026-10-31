@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicLong
 class McpException(message: String, val httpCode: Int = 0) : Exception(message)
 
 data class McpTool(val name: String, val description: String, val schema: JSONObject)
-data class McpCallResult(val ok: Boolean, val text: String)
+data class McpCallResult(val ok: Boolean, val text: String, val structured: JSONObject? = null)
 data class McpInit(val protocol: String, val serverName: String)
 
 /** Minimal MCP client over Streamable HTTP (JSON or SSE responses). */
@@ -96,7 +96,7 @@ class McpClient(private val url: String, private val tokenProvider: () -> String
             }
         }
         if (sb.isBlank() && r.has("structuredContent")) sb.append(r.opt("structuredContent").toString())
-        return McpCallResult(!r.optBoolean("isError", false), sb.toString().trim())
+        return McpCallResult(!r.optBoolean("isError", false), sb.toString().trim(), r.optJSONObject("structuredContent"))
     }
 
     private fun notify(method: String) {
@@ -128,7 +128,7 @@ class McpClient(private val url: String, private val tokenProvider: () -> String
             val code = c.responseCode
             c.getHeaderField("Mcp-Session-Id")?.let { sessionId = it }
             if (code >= 400) {
-                val err = runCatching { c.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty().take(400)
+                val err = runCatching { c.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty().take(1500)
                 throw McpException("HTTP $code${if (err.isNotBlank()) ": $err" else ""}", code)
             }
             if (expectId == null || code == 202 || code == 204) return null

@@ -23,9 +23,11 @@ class ChatOrchestrator(
     private val status: (String?) -> Unit,
 ) {
     @Volatile private var stopped = false
+    private val prior = ArrayList<JSONObject?>()
+    private val evidence = StringBuilder()
 
     private class Pass(val raw: String, val res: GenResult, val continuations: Int, val repetition: Boolean, val totalTokens: Int, val note: String)
-    private class Outcome(val ok: Boolean, val text: String)
+    private class Outcome(val ok: Boolean, val text: String, val label: String? = null)
 
     fun stop() {
         stopped = true
@@ -123,9 +125,14 @@ class ChatOrchestrator(
 
     private suspend fun execute(spec: ToolSpec, args: JSONObject, route: Route, note: String): Outcome {
         val t0 = System.currentTimeMillis()
+        var label = spec.name
         val res: McpCallResult = try {
             withTimeout(75_000) {
-                if (spec.serverId == null) LocalTools.run(spec.remoteName, args) else mcp.call(spec.serverId, spec.remoteName, args)
+                when (spec.serverId) {
+                    Gateway.ID -> { val g = Gateway.run(spec.remoteName, args, mcp, prior); label = g.label; McpCallResult(g.ok, g.text) }
+                    null -> LocalTools.run(spec.remoteName, args)
+                    else -> mcp.call(spec.serverId!!, spec.remoteName, args)
+                }
             }
         } catch (e: TimeoutCancellationException) {
             McpCallResult(false, "ERROR: tool timed out after 75 s")
@@ -134,8 +141,8 @@ class ChatOrchestrator(
             McpCallResult(false, "ERROR: ${e.message}")
         }
         val text = if (res.ok) res.text.ifBlank { "(empty result)" } else if (res.text.startsWith("ERROR")) res.text else "ERROR: ${res.text}"
-        log.add(ToolLogEntry(System.currentTimeMillis(), route.label, spec.name, args.toString().take(400), res.ok, System.currentTimeMillis() - t0, text.take(300), note))
-        return Outcome(res.ok, text)
+        log.add(ToolLogEntry(System.currentTimeMillis(), route.label, label, args.toString().take(800), res.ok, System.currentTimeMillis() - t0, text.take(2000), note))
+        return Outcome(res.ok, text, label)
     }
 
     private suspend fun prepareTools(route: Route, text: String, s: AppSettings): Pair<List<ToolSpec>, String> {
@@ -152,11 +159,14 @@ class ChatOrchestrator(
             }
         }
         val all = ToolRegistry.build(mcp.states.value)
+        if (sid != null && mcp.state(sid).tools.isEmpty()) return emptyList<ToolSpec>() to problem
         return Router.select(route, text, all, s.maxToolsExposed.coerceAtLeast(1)) to problem
     }
 
     suspend fun run(userText: String, s: AppSettings, persist: () -> Unit) {
         stopped = false
+        prior.clear()
+        evidence.setLength(0)
         val lm = engine.loaded
         if (lm == null) { status("Load a model in the Models tab first."); return }
         val userMsg = ChatMessage(newId(), "user", userText)
@@ -184,6 +194,7 @@ class ChatOrchestrator(
         val sampling = if (tools.isNotEmpty()) s.presets.getOrElse(TOOL_PRESET_INDEX) { s.presets[0] }.sampling else s.presets[s.activePreset.coerceIn(0, s.presets.lastIndex)].sampling
         var system = s.systemPrompt
         if (tools.isNotEmpty()) system += "\n\n" + ToolPrompt.RULES + "\n\n" + ToolPrompt.build(tools, xml)
+        if (tools.any { it.serverId == Gateway.ID }) route.serverId?.let { system += "\n\n" + Gateway.RULES + "\n\n" + Gateway.catalog(it, mcp) }
 
         val work = ArrayList(modelHistory(messages.value))
         val baseSize = work.size
@@ -213,14 +224,14 @@ class ChatOrchestrator(
                     retries++
                     log.note(route.label, "model produced no tool call; correction retry $retries/${s.toolRetries}")
                     work.add("assistant" to answer.ifBlank { "(no answer)" })
-                    work.add("user" to "Correction: this request requires calling one of these tools: ${active.joinToString { it.name }}. Reply ONLY with a tool call in the required format.")
+                    work.add("user" to "Correction: this request requires tool data and cannot be answered from memory. Reply ONLY with a tool call in the required format, using one of: ${active.joinToString { it.name }}${route.serverId?.let { " (server id: $it)" } ?: ""}.")
                     upd(asstId) { it.copy(content = "", reasoning = "") }
                     continue
                 }
                 val spec = active.first()
-                val forced = Router.forceArgs(spec, userText, route)
+                val forced = if (route == Route.MATH) Router.forceArgs(spec, userText, route) else null
                 if (forced == null) {
-                    upd(asstId) { it.copy(content = "The model did not call the required tool and I couldn't build its arguments automatically, so I won't answer from memory. Try rephrasing (for weather, include a place name).", isError = true, footer = "No tool result") }
+                    upd(asstId) { it.copy(content = "The model did not call the required tool after ${s.toolRetries} correction attempt(s), so I won't answer from memory. Try again, rephrase, or use a larger model. The Tools tab log shows what happened.", isError = true, footer = "No tool result") }
                     persist(); return
                 }
                 log.note(route.label, "forced by router: ${spec.name}")
@@ -228,11 +239,13 @@ class ChatOrchestrator(
             }
 
             if (parsed.isEmpty()) {
+                val unsupported = if (route != Route.NONE && successes > 0 && !failedPass) Grounding.unsupported(answer, evidence.toString()) else emptyList()
+                val groundNote = if (unsupported.isEmpty()) "" else "⚠ Not found in tool data: ${unsupported.take(6).joinToString(", ")}. Verify against the tool results above."
                 upd(asstId) { m ->
                     val ok = used.count { it.startsWith("✓") }
                     val bad = used.count { it.startsWith("✗") }
                     val toolLine = if (used.isEmpty()) "" else "\nTools: ${used.joinToString(", ")}" + if (bad > 0 && ok == 0) "\n⚠ no tool call succeeded" else ""
-                    m.copy(footer = footerFor(pass, s) + toolLine, isError = r.reason == Reason.ERROR, sources = sources.take(8))
+                    m.copy(footer = footerFor(pass, s) + toolLine, isError = r.reason == Reason.ERROR, sources = sources.take(8), notice = listOf(m.notice, groundNote).filter { it.isNotBlank() }.joinToString("\n"))
                 }
                 persist(); return
             }
@@ -263,8 +276,8 @@ class ChatOrchestrator(
                 }
                 if (!out.ok && (out.text.startsWith("ERROR: invalid arguments") || out.text.startsWith("ERROR: unknown tool") || call.error != null)) validationFailure = true
                 calls++
-                used.add((if (out.ok) "✓ " else "✗ ") + (spec?.name ?: call.name.ifEmpty { "?" }))
-                if (out.ok) { successes++; sources.addAll(extractUrls(out.text)) }
+                used.add((if (out.ok) "✓ " else "✗ ") + (out.label ?: spec?.name ?: call.name.ifEmpty { "?" }))
+                if (out.ok) { successes++; sources.addAll(extractUrls(out.text)); evidence.append(out.text).append('\n') }
                 var text = out.text
                 val limit = s.maxToolResultChars.coerceAtLeast(500)
                 if (text.length > limit) text = text.take(limit) + "\n[truncated: ${out.text.length - limit} more characters omitted to protect context]"

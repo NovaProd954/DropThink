@@ -53,3 +53,7 @@ The INTERNET permission is used only by the MCP client. Local inference, local t
 - Older messages are dropped (with a visible notice) rather than summarized when the context fills up.
 - Debug signing key is cached in CI; if the cache expires the next APK cannot update the installed one (uninstall first).
 - No project license has been chosen yet. Third-party: llama.cpp (MIT), AndroidX/Compose/Kotlin/kotlinx.coroutines (Apache-2.0).
+
+## Tool access (model-driven, app-executed)
+
+The model never talks to MCP servers directly. It calls two in-app tools: `mcp_list_tools` and `mcp_call_tool` (server, tool, arguments). The app validates the call against the live schema, runs the real MCP server and returns the exact result or error. Later calls can reuse earlier results with `@N.path` (e.g. `@1.results.0.latitude`). The router only enforces that a request needing live data must make tool calls; nothing about weather, search or scraping is hardcoded. Numbers in the final answer that are absent from tool output are flagged.

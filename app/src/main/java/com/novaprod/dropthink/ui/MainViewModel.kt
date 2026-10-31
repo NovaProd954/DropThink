@@ -211,7 +211,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ToolCallParser.validate(coerced, spec.schema)?.let { onResult("Invalid arguments: $it"); return@launch }
             val t0 = System.currentTimeMillis()
             val res = if (spec.serverId == null) com.novaprod.dropthink.tools.LocalTools.run(spec.remoteName, coerced) else mcp.call(spec.serverId, spec.remoteName, coerced)
-            toolLog.add(com.novaprod.dropthink.tools.ToolLogEntry(System.currentTimeMillis(), "manual test", spec.name, coerced.toString().take(400), res.ok, System.currentTimeMillis() - t0, res.text.take(300), "direct test"))
+            toolLog.add(com.novaprod.dropthink.tools.ToolLogEntry(System.currentTimeMillis(), "manual test", spec.name, coerced.toString().take(400), res.ok, System.currentTimeMillis() - t0, res.text.take(2000), "direct test"))
             onResult((if (res.ok) "OK" else "FAILED") + " (${System.currentTimeMillis() - t0} ms)\n" + res.text.take(4000))
         }
     }

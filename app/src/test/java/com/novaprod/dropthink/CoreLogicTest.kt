@@ -1,5 +1,6 @@
 package com.novaprod.dropthink
 
+import com.novaprod.dropthink.tools.Grounding
 import com.novaprod.dropthink.util.Calc
 import com.novaprod.dropthink.util.extractUrls
 import com.novaprod.dropthink.util.looksRepetitive
@@ -47,5 +48,10 @@ class CoreLogicTest {
 
     @Test fun urls() {
         assertEquals(listOf("https://a.com/x", "https://b.org"), extractUrls("see https://a.com/x, and (https://b.org)."))
+    }
+
+    @Test fun grounding() {
+        assertTrue(Grounding.unsupported("It is 22.4°C with 80% humidity.", "temperature_2m: 22.4 humidity: 80").isEmpty())
+        assertEquals(listOf("31.9°"), Grounding.unsupported("High of 31.9°C", "temperature_2m_max: 28.1"))
     }
 }
